@@ -2,7 +2,4 @@ pauli_results
 pauli_results_test
 logs
 pauli_results_manual/
-pauli_results
-pauli_results_test
-logs
 python_statevector_simulation/results
