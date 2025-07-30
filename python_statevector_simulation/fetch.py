@@ -15,7 +15,7 @@ from tqdm import tqdm
 GITHUB_API = "https://api.github.com"
 
 def request_with_retries(url, headers=None, params=None, stream=False,
-                         timeout=10, max_retries=3, backoff=2):
+                         timeout=30, max_retries=5, backoff=2):
     headers = headers or {}
     for attempt in range(1, max_retries + 1):
         try:
@@ -25,10 +25,14 @@ def request_with_retries(url, headers=None, params=None, stream=False,
             )
             resp.raise_for_status()
             return resp
-        except requests.RequestException:
+        except requests.RequestException as e:
+            print(f"Attempt {attempt}/{max_retries} failed: {e}")
             if attempt == max_retries:
                 raise
+            print(f"Retrying in {backoff} seconds...")
             time.sleep(backoff)
+            # Increase backoff time for next retry
+            backoff *= 2
 
 def get_workflow_runs(owner, repo, workflow_filename, token, since_dt):
     # (unchanged) fetch workflow list → identify workflow ID → list recent successful runs
@@ -86,18 +90,43 @@ def download_and_extract(artifact, token, base_dir):
     os.makedirs(run_dir, exist_ok=True)
 
     zip_path = os.path.join(run_dir, f"{name}_{art_id}.zip")
-    # stream download
-    with request_with_retries(dl_url, headers=headers, stream=True).raw as r:
-        with open(zip_path, 'wb') as f:
-            for chunk in tqdm(r, desc=f"Downloading {name}", unit='KB', unit_scale=True):
-                f.write(chunk)
+    
+    # Try downloading with progressively longer timeouts
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # stream download with increasing timeout
+            timeout = 30 * attempt  # 30s, 60s, 90s
+            print(f"Downloading {name} (attempt {attempt}/{max_attempts}, timeout={timeout}s)")
+            
+            with request_with_retries(dl_url, headers=headers, stream=True, timeout=timeout).raw as r:
+                with open(zip_path, 'wb') as f:
+                    for chunk in tqdm(r, desc=f"Downloading {name}", unit='KB', unit_scale=True):
+                        f.write(chunk)
+            # If we get here, download succeeded
+            break
+        except Exception as e:
+            print(f"Error downloading {name}: {e}")
+            if attempt == max_attempts:
+                print(f"Failed to download {name} after {max_attempts} attempts, skipping")
+                return None
+            print(f"Retrying in {attempt*5} seconds...")
+            time.sleep(attempt * 5)
 
     # extract
     ext_dir = os.path.join(run_dir, f"artifact_{art_id}")
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        zf.extractall(ext_dir)
-    os.remove(zip_path)
-    return ext_dir
+    try:
+        if os.path.exists(zip_path) and os.path.getsize(zip_path) > 0:
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(ext_dir)
+            os.remove(zip_path)
+            return ext_dir
+        else:
+            print(f"Skipping extraction for {name}: ZIP file doesn't exist or is empty")
+            return None
+    except zipfile.BadZipFile:
+        print(f"Error: Bad ZIP file for {name}, skipping extraction")
+        return None
 
 def collect_npz_paths(extracted_dir):
     """
@@ -154,7 +183,11 @@ def main():
     for run in runs:
         arts = get_artifacts(args.owner, args.repo, run['id'], token)
         for art in arts:
-            download_and_extract(art, token, tmp_base)
+            try:
+                download_and_extract(art, token, tmp_base)
+            except Exception as e:
+                print(f"Failed to process artifact {art.get('name', 'unknown')}: {e}")
+                print("Continuing with next artifact...")
 
     # 2) Find all .npz files with their metadata
     npz_list = []
