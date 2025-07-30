@@ -1,0 +1,123 @@
+name: Parallel Simulations
+
+on:
+  workflow_dispatch:
+    inputs:
+      N:
+        description: Number of qubits
+        default: '14'
+        required: true
+      T:
+        description: Time to run
+        default: '1000'
+        required: true
+      circuit_realizations:
+        description: Total circuit realizations
+        default: '10'
+        required: true
+      L:
+        description: Grid resolution
+        default: '3'
+        required: true
+      batch_size:
+        description: Number of points per job
+        default: '5'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.make-matrix.outputs.matrix }}
+    steps:
+      - name: Calculate batch matrix
+        id: make-matrix
+        run: |
+          N=${{ github.event.inputs.N }}
+          CR=${{ github.event.inputs.circuit_realizations }}
+          L=${{ github.event.inputs.L }}
+          b=${{ github.event.inputs.batch_size }}
+          
+          pts=()
+          for cr in $(seq 0 $((CR-1))); do
+            for ix in $(seq 0 $((L-1))); do
+              for iz in $(seq 0 $((L-1))); do
+                pts+=( "{\"cr\":$cr,\"ix\":$ix,\"iz\":$iz}" )
+              done
+            done
+          done
+          
+          total=${#pts[@]}
+          M=$(( (total + b - 1) / b ))
+          
+          matrix="["
+          for i in $(seq 0 $((M-1))); do
+            start=$(( i * b ))
+            end=$(( start + b - 1 ))
+            if [ $end -ge $((total-1)) ]; then end=$((total-1)); fi
+            
+            batch_pts="["
+            for j in $(seq $start $end); do
+              batch_pts+="${pts[j]}"
+              if [ $j -lt $end ]; then batch_pts+=','; fi
+            done
+            batch_pts+="]"
+            
+            matrix+="{\"batch_index\":$i,\"points\":$batch_pts}"
+            if [ $i -lt $((M-1)) ]; then matrix+=','; fi
+          done
+          matrix+="]"
+          
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+
+  run-batch:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          python3 -m pip install --upgrade pip
+          pip install quspin numpy scipy tqdm sympy imageio psutil
+
+      - name: Debug batch info
+        run: |
+          echo "Batch index: ${{ matrix.batch_index }}"
+          echo "Points JSON: ${{ matrix.points }}"
+
+      - name: Run simulation
+        working-directory: python_statevector_simulation
+        run: |
+          POINT_FLAGS=""
+          for p in $(echo '${{ matrix.points }}' | jq -c '.[]'); do
+            cr=$(echo $p | jq '.cr')
+            ix=$(echo $p | jq '.ix')
+            iz=$(echo $p | jq '.iz')
+            POINT_FLAGS+=" --point $cr $ix $iz"
+          done
+
+          python single_run.py \
+            --N ${{ github.event.inputs.N }} \
+            --T ${{ github.event.inputs.T }} \
+            --circuit-realizations ${{ github.event.inputs.circuit_realizations }} \
+            --L ${{ github.event.inputs.L }} \
+            --params-path ../random_archive/angles_N${{ github.event.inputs.N }}.json \
+            --output-magic results/magic/N${{ github.event.inputs.N }}/T${{ github.event.inputs.T }} \
+            --output-entanglement results/entanglement/N${{ github.event.inputs.N }}/T${{ github.event.inputs.T }} \
+            $POINT_FLAGS
+
+      - name: Upload batch artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-batch-${{ matrix.batch_index }}
+          path: python_statevector_simulation/results/
