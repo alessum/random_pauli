@@ -1,5 +1,10 @@
 name: Parallel Simulations
 
+# Set concurrency group to allow multiple workflows but limit per-workflow concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
@@ -21,7 +26,7 @@ on:
         required: true
       batch_size:
         description: Number of points per job
-        default: '5'
+        default: '20'
         required: true
 
 permissions:
@@ -80,8 +85,15 @@ jobs:
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      # Don't cancel all jobs if one fails
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
 
       - name: Install prerequisites
         run: |
@@ -121,3 +133,46 @@ jobs:
         with:
           name: results-batch-${{ matrix.batch_index }}
           path: python_statevector_simulation/results/
+          retention-days: 5  # Keep artifacts for 5 days to save storage
+          
+  combine-results:
+    needs: run-batch
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install prerequisites
+        run: |
+          pip install numpy requests tqdm
+          
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          pattern: results-batch-*
+          merge-multiple: true
+          
+      - name: Combine results
+        run: |
+          REPO_NAME="${{ github.repository }}"
+          REPO_NAME=${REPO_NAME#*/}  # Remove owner/ prefix
+          python python_statevector_simulation/fetch.py \
+            --owner ${{ github.repository_owner }} \
+            --repo ${REPO_NAME} \
+            --workflow executor.yml \
+            --hours 1 \
+            --outdir combined_results \
+            --token ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-results-N${{ github.event.inputs.N }}-T${{ github.event.inputs.T }}-L${{ github.event.inputs.L }}
+          path: combined_results/
+          retention-days: 30  # Keep combined results longer
