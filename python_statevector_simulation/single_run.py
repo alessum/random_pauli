@@ -145,7 +145,7 @@ def parse_args():
     p.add_argument("--output-entanglement", type=str,   required=True,
                    help="Base dir to save entanglement .npz files")
     p.add_argument(
-        "--point", nargs=3, metavar=('CR','IX','IZ'), type=int, action='append',
+        "--point", dest="points", nargs=3, metavar=('CR','IX','IZ'), type=int, action='append',
         help="One point to compute: cr index, Jx-idx, Jz-idx"
     )
     return p.parse_args()
