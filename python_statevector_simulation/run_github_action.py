@@ -47,7 +47,7 @@ def trigger_workflow(owner, repo, workflow_file, token, inputs):
     }
     
     payload = {
-        'ref': 'main',  # or 'master' depending on your default branch
+        'ref': 'main',  # targeting main branch
         'inputs': inputs
     }
     
