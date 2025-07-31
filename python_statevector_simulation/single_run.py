@@ -79,16 +79,13 @@ def build_circuits(args):
 
 def compute_and_save(args, circuits, masks):
     """
-    For each (cr,ix,iz) in args.points (or all if empty), compute magic+entanglement
+    For each (cr,ix,iz) in args.points, compute magic+entanglement
     and save compressed .npz per realization.
+    Raises an error if no points are provided.
     """
-    # default to all points if none provided
+    # Error if no points provided
     if not args.points:
-        args.points = list(product(
-            range(args.circuit_realizations),
-            range(args.L),
-            range(args.L)
-        ))
+        raise ValueError("No points provided. Please specify at least one point using --point CR IX IZ")
 
     # prepare output arrays
     magic_all = {}

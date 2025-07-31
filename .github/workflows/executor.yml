@@ -121,14 +121,28 @@ jobs:
       - name: Run simulation
         working-directory: python_statevector_simulation
         run: |
+          # Create a temporary JSON file with the points data
+          echo '${{ matrix.points }}' > points.json
+          
+          # Debug the content of the file
+          echo "Content of points.json:"
+          cat points.json
+          
+          # Generate point flags using the file
           POINT_FLAGS=""
-          for p in $(echo '${{ matrix.points }}' | jq -c '.[]'); do
-            cr=$(echo $p | jq '.cr')
-            ix=$(echo $p | jq '.ix')
-            iz=$(echo $p | jq '.iz')
-            POINT_FLAGS+=" --point $cr $ix $iz"
-          done
-
+          if jq -e '. | length > 0' points.json > /dev/null 2>&1; then
+            while read -r point; do
+              cr=$(echo $point | jq -r '.cr')
+              ix=$(echo $point | jq -r '.ix')
+              iz=$(echo $point | jq -r '.iz')
+              POINT_FLAGS+=" --point $cr $ix $iz"
+            done < <(jq -c '.[]' points.json)
+            
+            echo "Generated point flags: $POINT_FLAGS"
+          else
+            echo "WARNING: No valid points found in JSON, will run with all points."
+          fi
+          
           python single_run.py \
             --N ${{ github.event.inputs.N }} \
             --T ${{ github.event.inputs.T }} \
