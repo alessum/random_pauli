@@ -28,11 +28,6 @@ on:
         description: Number of points per job
         default: '50'
         required: true
-      max_parallel:
-        description: 'Maximum parallel jobs (free tier: 20, Pro: 40-60)'
-        default: '20'
-        type: number
-        required: true
 
 permissions:
   contents: write
@@ -90,8 +85,6 @@ jobs:
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      # Control the maximum number of parallel jobs
-      max-parallel: ${{ fromJSON(github.event.inputs.max_parallel) }}
       # Don't cancel all jobs if one fails
       fail-fast: false
     steps:
@@ -114,6 +107,16 @@ jobs:
         run: |
           echo "Batch index: ${{ matrix.batch_index }}"
           echo "Points JSON: ${{ matrix.points }}"
+          echo "Total points in batch: $(echo '${{ matrix.points }}' | jq '. | length')"
+          
+          # Debug individual points extraction
+          echo "Individual points:"
+          for p in $(echo '${{ matrix.points }}' | jq -c '.[]'); do
+            cr=$(echo $p | jq '.cr')
+            ix=$(echo $p | jq '.ix')
+            iz=$(echo $p | jq '.iz')
+            echo "  Point: cr=$cr ix=$ix iz=$iz"
+          done
 
       - name: Run simulation
         working-directory: python_statevector_simulation

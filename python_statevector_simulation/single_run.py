@@ -93,6 +93,9 @@ def compute_and_save(args, circuits, masks):
     # prepare output arrays
     magic_all = {}
     entan_all = {}
+    
+    # print points for debugging
+    print(f"Computing {len(args.points)} points: {args.points}")
 
     for cr, ix, iz in tqdm(args.points, desc="Points"):
         circ = circuits[cr][ix][iz]
