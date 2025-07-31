@@ -46,35 +46,45 @@ jobs:
           L=${{ github.event.inputs.L }}
           b=${{ github.event.inputs.batch_size }}
           
-          pts=()
+          # Generate a JSON file with all points first
+          echo -n "[" > all_points.json
+          first=true
           for cr in $(seq 0 $((CR-1))); do
             for ix in $(seq 0 $((L-1))); do
               for iz in $(seq 0 $((L-1))); do
-                pts+=( "{\"cr\":$cr,\"ix\":$ix,\"iz\":$iz}" )
+                if [ "$first" = true ]; then
+                  first=false
+                else
+                  echo -n "," >> all_points.json
+                fi
+                echo -n "{\"cr\":$cr,\"ix\":$ix,\"iz\":$iz}" >> all_points.json
               done
             done
           done
+          echo -n "]" >> all_points.json
           
-          total=${#pts[@]}
+          # Calculate total and batches
+          total=$(jq '. | length' all_points.json)
           M=$(( (total + b - 1) / b ))
+          echo "Total points: $total, Creating $M batches of size $b"
           
+          # Create the matrix JSON using jq
           matrix="["
           for i in $(seq 0 $((M-1))); do
             start=$(( i * b ))
-            end=$(( start + b - 1 ))
-            if [ $end -ge $((total-1)) ]; then end=$((total-1)); fi
+            if [ $i -gt 0 ]; then 
+              matrix+=","
+            fi
             
-            batch_pts="["
-            for j in $(seq $start $end); do
-              batch_pts+="${pts[j]}"
-              if [ $j -lt $end ]; then batch_pts+=','; fi
-            done
-            batch_pts+="]"
-            
-            matrix+="{\"batch_index\":$i,\"points\":$batch_pts}"
-            if [ $i -lt $((M-1)) ]; then matrix+=','; fi
+            # Use jq to slice the array for this batch
+            batch_points=$(jq -c ".[${start}:${start}+${b}]" all_points.json)
+            matrix+="{\"batch_index\":$i,\"points\":${batch_points}}"
           done
           matrix+="]"
+          
+          # Debug: show first batch
+          echo "First batch points:"
+          echo $matrix | jq '.[0].points'
           
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
 
@@ -121,28 +131,34 @@ jobs:
       - name: Run simulation
         working-directory: python_statevector_simulation
         run: |
-          # Create a temporary JSON file with the points data
-          echo '${{ matrix.points }}' > points.json
+          # Save the points to a JSON file for processing
+          echo '${{ toJSON(matrix.points) }}' > points.json
           
           # Debug the content of the file
-          echo "Content of points.json:"
+          echo "Points JSON content:"
           cat points.json
+          echo "Number of points: $(jq '. | length' points.json)"
           
-          # Generate point flags using the file
+          # Generate point flags directly from JSON
           POINT_FLAGS=""
-          if jq -e '. | length > 0' points.json > /dev/null 2>&1; then
-            while read -r point; do
-              cr=$(echo $point | jq -r '.cr')
-              ix=$(echo $point | jq -r '.ix')
-              iz=$(echo $point | jq -r '.iz')
-              POINT_FLAGS+=" --point $cr $ix $iz"
-            done < <(jq -c '.[]' points.json)
-            
-            echo "Generated point flags: $POINT_FLAGS"
-          else
-            echo "WARNING: No valid points found in JSON, will run with all points."
+          count=0
+          for point in $(jq -c '.[]' points.json); do
+            cr=$(echo $point | jq -r '.cr')
+            ix=$(echo $point | jq -r '.ix')
+            iz=$(echo $point | jq -r '.iz')
+            POINT_FLAGS+=" --point $cr $ix $iz"
+            count=$((count + 1))
+          done
+          
+          echo "Generated $count point flags."
+          
+          # Fail if no points were found
+          if [ $count -eq 0 ]; then
+            echo "ERROR: No points were found in the batch. Exiting."
+            exit 1
           fi
           
+          # Run the simulation with the generated point flags
           python single_run.py \
             --N ${{ github.event.inputs.N }} \
             --T ${{ github.event.inputs.T }} \
