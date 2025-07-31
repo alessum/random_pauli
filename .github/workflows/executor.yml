@@ -31,6 +31,7 @@ on:
       max_parallel:
         description: 'Maximum parallel jobs (free tier: 20, Pro: 40-60)'
         default: '20'
+        type: number
         required: true
 
 permissions:
@@ -90,7 +91,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
       # Control the maximum number of parallel jobs
-      max-parallel: ${{ github.event.inputs.max_parallel }}
+      max-parallel: ${{ fromJSON(github.event.inputs.max_parallel) }}
       # Don't cancel all jobs if one fails
       fail-fast: false
     steps:
