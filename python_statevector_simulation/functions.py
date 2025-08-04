@@ -14,7 +14,7 @@ from math import comb
 
 from scipy.linalg import eigh
 import warnings
-from itertools import combinations
+from itertools import combinations, product
 from functools import reduce
 
 
@@ -31,19 +31,19 @@ def print_matrix(matr, precision=4):
     print('\n'.join(table))
 #########################################################################
 I = np.diag([1, 
-               1])
+               1]) + 0j
 X = np.array([[0,1],
-              [1,0]])
+              [1,0]], dtype=complex)
 Y = np.array([[0,-1j],
-              [1j,0]])
+              [1j,0]], dtype=complex)
 Z = np.array([[1, 0],
-              [0,-1]])
+              [0,-1]], dtype=complex)
 M = np.array([[0,1],
-              [0,0]])
+              [0,0]], dtype=complex)
 P = np.array([[0,0],
-              [1,0]])
-UP = np.array([1,0])
-DOWN = np.array([0,1])
+              [1,0]], dtype=complex)
+UP = np.array([1,0], dtype=complex)
+DOWN = np.array([0,1], dtype=complex)
 
 II = np.kron(I,I)
 IX = np.kron(I,X)
@@ -603,7 +603,7 @@ warnings.simplefilter("ignore", category=UserWarning)
 
 def _safe_logm(mat: np.ndarray, epsilon: float) -> np.ndarray:
     """
-    Compute log(mat) by eigen‑decomposition, clamping eigenvalues to [epsilon, ∞).
+    Compute log(mat) by eigen-decomposition, clamping eigenvalues to [epsilon, ∞).
     """
     vals, vecs = eigh(mat)
     # clamp eigenvalues away from zero
@@ -613,7 +613,7 @@ def _safe_logm(mat: np.ndarray, epsilon: float) -> np.ndarray:
 
 def _safe_frac_power(mat: np.ndarray, power: float, epsilon: float) -> np.ndarray:
     """
-    Compute mat**power by eigen‑decomposition, clamping eigenvalues to [epsilon, ∞).
+    Compute mat**power by eigen-decomposition, clamping eigenvalues to [epsilon, ∞).
     """
     vals, vecs = eigh(mat)
     safe_vals = np.clip(vals, epsilon, None)
@@ -627,7 +627,7 @@ def renyi_divergence(
     epsilon: float = 1e-12,
 ) -> float:
     """
-    Computes D_α(ρ || σ) with spectrum‑level regularization to avoid Infs/NaNs.
+    Computes D_α(ρ || σ) with spectrum-level regularization to avoid Infs/NaNs.
 
     Parameters
     ----------
@@ -692,7 +692,7 @@ def renyi_divergence_sym(
     Ubasis=None
 ) -> float:
     """
-    Computes D_α(ρ || G(ρ)) with spectrum‑level regularization to avoid Infs/NaNs.
+    Computes D_α(ρ || G(ρ)) with spectrum-level regularization to avoid Infs/NaNs.
 
     Parameters
     ----------
@@ -866,19 +866,19 @@ for name, (rho, sigma) in test_pairs.items():
 # U1 ############
 def spin_basis_1d(N, m=0.0, dtype=np.uint32, tol=1e-8):
     """
-    NumPy‐only re‑implementation of quspin.basis.spin_basis_1d
-    valid for any N (even or odd) and allowing half‑integer total M.
+    NumPy‐only re-implementation of quspin.basis.spin_basis_1d
+    valid for any N (even or odd) and allowing half-integer total M.
 
     Parameters
     ----------
     N : int
-        Number of spin‑1/2 sites.
+        Number of spin-1/2 sites.
     m : float
         Magnetization per site; 2*m*N must be (nearly) integer.
     dtype : np.dtype
-        Output integer dtype for the bit‑strings.
+        Output integer dtype for the bit-strings.
     tol : float
-        Tolerance for floating‑point checks.
+        Tolerance for floating-point checks.
 
     Returns
     -------
@@ -905,7 +905,7 @@ def spin_basis_1d(N, m=0.0, dtype=np.uint32, tol=1e-8):
         raise ValueError(f"2*m*N = {twoM_float} not (nearly) integer")
     twoM = int(round(twoM_float))
 
-    # 2) number of up‑spins: n_up = (2M + N) / 2
+    # 2) number of up-spins: n_up = (2M + N) / 2
     if (twoM + N) % 2 != 0:
         # Should never happen if twoM is int and N is int, but just in case
         raise ValueError(
@@ -985,7 +985,7 @@ def _infer_subsystem_dims(psi):
 def schmidt_coeffs(psi: np.ndarray):
     """
     Compute the normalized Schmidt coefficients of |psi⟩
-    splitting into A⊗B with an equal‑qubit cut.
+    splitting into A⊗B with an equal-qubit cut.
     """
     dA, dB = _infer_subsystem_dims(psi)
     M = psi.reshape((dA, dB))
@@ -1053,3 +1053,74 @@ def participation_entropy(psi: np.ndarray,
     # Rényi form
     sum_p_k = np.sum(p**k)
     return (1.0 / (1.0 - k)) * np.log(sum_p_k) / np.log(base)
+
+
+def stabilizer_renyi_entropy(psi: np.ndarray, k: float) -> float:
+    """
+    Computation of the stabilizer Rényi entropy by applying
+    single-qubit Pauli operations via tensor contractions.
+    """
+    D = psi.size
+    L = int(np.log2(D))
+    if 2**L != D:
+        raise ValueError("State vector length must be a power of 2.")
+    if np.isclose(k, 1.0):
+        raise ValueError("k = 1 is singular; handle k→1 separately.")
+    
+    # Reshape psi for tensor operations
+    psi_tensor = psi.reshape([2]*L)
+    
+    # Single-qubit Pauli matrices
+    paulis = { 'I': I, 'X': X, 'Y': Y, 'Z': Z }
+    
+    total = 0.0
+    # Iterate over all Pauli strings
+    for labels in product('IXYZ', repeat=L):
+        # Apply each single-qubit Pauli via tensordot
+        psi_transformed = psi_tensor
+        for qubit, lbl in enumerate(labels):
+            psi_transformed = np.tensordot(
+                paulis[lbl], psi_transformed, axes=([1], [qubit])
+            )
+            # Move the contracted axis back to original position
+            psi_transformed = np.moveaxis(psi_transformed, 0, qubit)
+        
+        exp_val = np.vdot(psi, psi_transformed.ravel())
+        total += (np.abs(exp_val)**(2*k))
+    
+    # Divide by D here (outside the loop to reduce operations)
+    total /= D
+    return np.log(total) / (1 - k)
+
+@njit
+def stabilizer_renyi_entropy_numba(psi, k):
+    D = psi.size
+    L = int(np.log2(D))
+    total = 0.0
+    # Pre-define pauli matrices in numba-compatible way
+    pauli_arr = np.zeros((4, 2, 2), np.complex128)
+    pauli_arr[0] = np.eye(2)
+    pauli_arr[1] = np.array([[0, 1], [1, 0]], np.complex128)
+    pauli_arr[2] = np.array([[0, -1j], [1j, 0]], np.complex128)
+    pauli_arr[3] = np.array([[1, 0], [0, -1]], np.complex128)
+    idxs = np.zeros(L, np.int32)
+    for idx in range(4**L):
+        code = idx
+        psi_t = psi.copy()
+        for q in range(L):
+            lbl = code % 4
+            code //= 4
+            # apply single-qubit pauli
+            new = np.zeros_like(psi_t)
+            for state in range(psi_t.size):
+                bit = (state >> q) & 1
+                for b in range(2):
+                    new_state = (state & ~(1 << q)) | (b << q)
+                    new[new_state] += pauli_arr[lbl, b, bit] * psi_t[state]
+            psi_t = new
+        exp_val = 0+0j
+        for i in range(D):
+            exp_val += np.conjugate(psi[i]) * psi_t[i]
+        total += np.abs(exp_val)**(2*k)
+    total /= D
+    return np.log(total) / (1 - k)

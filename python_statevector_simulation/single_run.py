@@ -94,21 +94,23 @@ def compute_and_save(args, circuits, masks):
     # print points for debugging
     print(f"Computing {len(args.points)} points: {args.points}")
 
-    for cr, ix, iz in tqdm(args.points, desc="Points"):
-        circ = circuits[cr][ix][iz]
-        # random basis input
-        psi = random_basis_state(args.N)
-        (m_vals, e_vals), _ = circ.run(
-            masks, psi, args.T,
-            objective=['magic','entanglement']
-        )
-
-        # save per-point
-        Jx, Jz = circ.couplings
+    # Group points by (ix, iz) - we'll combine all circuit realizations for the same (Jx, Jz) point
+    points_by_grid = {}
+    for cr, ix, iz in args.points:
+        key = (ix, iz)
+        if key not in points_by_grid:
+            points_by_grid[key] = []
+        points_by_grid[key].append((cr, ix, iz))
+    
+    # Process each grid point (ix, iz)
+    for (ix, iz), cr_points in tqdm(points_by_grid.items(), desc="Grid Points"):
+        # Get Jx, Jz values from the first circuit (same for all CRs at this grid point)
+        Jx, Jz = circuits[cr_points[0][0]][ix][iz].couplings
+        
+        # Create output directories
         m_dir = os.path.join(args.output_magic, f"Jx{Jx:.2f}", f"Jz{Jz:.2f}")
         e_dir = os.path.join(args.output_entanglement, f"Jx{Jx:.2f}", f"Jz{Jz:.2f}")
         
-        # Create directories with error handling
         try:
             os.makedirs(m_dir, exist_ok=True)
             os.makedirs(e_dir, exist_ok=True)
@@ -117,16 +119,40 @@ def compute_and_save(args, circuits, masks):
             print(f"  Magic dir: {m_dir}")
             print(f"  Entanglement dir: {e_dir}")
             raise
-
-        m_path = os.path.join(m_dir, f"cr{cr}.npz")
-        e_path = os.path.join(e_dir, f"cr{cr}.npz")
-
-        np.savez_compressed(m_path, magic=m_vals)
-        np.savez_compressed(e_path, entan=e_vals)
-
-        # optional: store in dict for return
-        magic_all[(cr,ix,iz)] = m_vals
-        entan_all[(cr,ix,iz)]  = e_vals
+        
+        # Collect results for all CRs at this grid point
+        magic_results = []
+        entan_results = []
+        cr_indices = []
+        
+        for cr, ix, iz in cr_points:
+            circ = circuits[cr][ix][iz]
+            psi = random_basis_state(args.N)
+            (m_vals, e_vals), _ = circ.run(
+                masks, psi, args.T,
+                objective=['magic','entanglement']
+            )
+            
+            magic_results.append(m_vals)
+            entan_results.append(e_vals)
+            cr_indices.append(cr)
+            
+            # Store in return dict
+            magic_all[(cr, ix, iz)] = m_vals
+            entan_all[(cr, ix, iz)] = e_vals
+        
+        # Stack results into arrays with shape (n_cr, T+1)
+        magic_stacked = np.stack(magic_results, axis=0)
+        entan_stacked = np.stack(entan_results, axis=0)
+        
+        # Save combined results
+        m_path = os.path.join(m_dir, "combined.npz")
+        e_path = os.path.join(e_dir, "combined.npz")
+        
+        np.savez_compressed(m_path, magic=magic_stacked, cr_indices=cr_indices)
+        np.savez_compressed(e_path, entan=entan_stacked, cr_indices=cr_indices)
+        
+        print(f"Saved combined results for Jx={Jx:.2f}, Jz={Jz:.2f} with {len(cr_indices)} circuit realizations")
 
     return magic_all, entan_all
 

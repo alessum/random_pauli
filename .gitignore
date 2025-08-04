@@ -4,3 +4,4 @@ logs
 pauli_results_manual/
 python_statevector_simulation/results
 tmp_fetch/
+combined_results/
